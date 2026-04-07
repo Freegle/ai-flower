@@ -54,7 +54,7 @@ export class ClaudeCodeAdapter implements LLMAdapter {
         maxTurns: 1,
         // Disable all tools — pure LLM call for JSON decision output
         allowedTools: [],
-        permissionMode: 'acceptEdits',
+        permissionMode: 'default',
       },
     })
 

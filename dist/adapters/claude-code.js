@@ -37,7 +37,7 @@ export class ClaudeCodeAdapter {
                 maxTurns: 1,
                 // Disable all tools — pure LLM call for JSON decision output
                 allowedTools: [],
-                permissionMode: 'acceptEdits',
+                permissionMode: 'default',
             },
         });
         for await (const message of gen) {
