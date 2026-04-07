@@ -5,16 +5,27 @@ import type {
   WorkflowInput,
   ProcessResult,
   LLMDecision,
+  TransitionDefinition,
   TransitionEvent,
+  TriggerTransitionResult,
   LLMAdapter,
   StorageAdapter,
   ActionDefinition,
+  StateDefinition,
   InstanceFilter,
   InstanceStatus,
 } from '../schema/types.js'
 import { TransitionValidator } from './TransitionValidator.js'
 import { ActionRegistry } from './ActionRegistry.js'
 import { PromptBuilder } from './PromptBuilder.js'
+
+export interface WorkflowHooks {
+  onEnterState?: (instance: WorkflowInstance, state: string, stateDef: StateDefinition) => Promise<void>
+  onExitState?: (instance: WorkflowInstance, state: string) => Promise<void>
+  onTransition?: (instance: WorkflowInstance, event: TransitionEvent) => Promise<void>
+  onInstanceCreated?: (instance: WorkflowInstance) => Promise<void>
+  onInstanceCompleted?: (instance: WorkflowInstance) => Promise<void>
+}
 
 export interface WorkflowEngineConfig {
   workflow: WorkflowDefinition
@@ -24,6 +35,10 @@ export interface WorkflowEngineConfig {
   actions?: ActionDefinition[]
   /** Max LLM retries when the response fails validation (default: 1) */
   maxLLMRetries?: number
+  /** Lifecycle hooks — async callbacks fired during state changes */
+  hooks?: WorkflowHooks
+  /** Max depth for chained unconditional transitions (default: 10) */
+  maxUnconditionalDepth?: number
 }
 
 /**
@@ -42,12 +57,16 @@ export class WorkflowEngine {
   private readonly registry: ActionRegistry
   private readonly promptBuilder: PromptBuilder
   private readonly maxRetries: number
+  private readonly hooks: WorkflowHooks
+  private readonly maxUnconditionalDepth: number
 
   constructor(private readonly config: WorkflowEngineConfig) {
     this.validator = new TransitionValidator(config.workflow)
     this.registry = new ActionRegistry()
     this.promptBuilder = new PromptBuilder(config.workflow, this.registry, this.validator)
     this.maxRetries = config.maxLLMRetries ?? 1
+    this.hooks = config.hooks ?? {}
+    this.maxUnconditionalDepth = config.maxUnconditionalDepth ?? 10
 
     // Validate the definition on startup
     const result = this.validator.validateDefinition()
@@ -87,6 +106,7 @@ export class WorkflowEngine {
       createdAt: now,
       updatedAt: now,
       label,
+      stayCount: 0,
     }
 
     const initialState = this.config.workflow.states[instance.currentState]
@@ -95,6 +115,7 @@ export class WorkflowEngine {
     }
 
     await this.config.storageAdapter.saveInstance(instance)
+    await this.safeHook('onInstanceCreated', instance)
     return instance
   }
 
@@ -191,40 +212,67 @@ export class WorkflowEngine {
     // Apply context updates
     const contextDelta = { ...decision.contextUpdates, ...actionResults }
     const previousState = instance.currentState
+    const toState = decision.proposedTransition ?? previousState
+
+    // Find the matched transition definition
+    const matchedTransition = decision.proposedTransition
+      ? this.config.workflow.transitions.find(
+          t => t.from === previousState && t.to === decision.proposedTransition
+        )
+      : undefined
 
     const event: TransitionEvent = {
       timestamp: new Date().toISOString(),
       fromState: previousState,
-      toState: decision.proposedTransition ?? previousState,
+      toState,
       trigger: 'llm_decision',
       triggeredBy: 'llm',
       actionsExecuted,
       contextDelta,
+      metadata: matchedTransition?.metadata,
     }
 
     instance.context = { ...instance.context, ...contextDelta }
     instance.history = [...instance.history, event]
     instance.updatedAt = new Date().toISOString()
 
-    // Apply transition
+    // Apply transition (including self-transitions)
     let transitioned = false
     if (decision.proposedTransition && decision.proposedTransition !== previousState) {
+      // Real transition
+      await this.safeHook('onExitState', instance, previousState)
+      await this.safeHook('onTransition', instance, event)
+
       instance.currentState = decision.proposedTransition
+      instance.stayCount = 0
       transitioned = true
 
-      // Check if new state is terminal
       const newStateDef = this.config.workflow.states[decision.proposedTransition]
       if (newStateDef?.nodeType === 'end') {
         instance.status = 'completed'
       }
 
-      // Update timeout for new state
       instance.timeoutAt = newStateDef?.timeout
         ? new Date(Date.now() + newStateDef.timeout.duration).toISOString()
         : undefined
+
+      await this.safeHook('onEnterState', instance, decision.proposedTransition, newStateDef!)
+
+      if (instance.status === 'completed') {
+        await this.safeHook('onInstanceCompleted', instance)
+      }
+    } else if (decision.proposedTransition && decision.proposedTransition === previousState) {
+      // Self-transition: record event, increment stayCount
+      instance.stayCount = (instance.stayCount ?? 0) + 1
+      await this.safeHook('onTransition', instance, event)
     }
 
     await this.config.storageAdapter.saveInstance(instance)
+
+    // Process unconditional transitions from new state
+    if (transitioned) {
+      await this.processUnconditionalTransitions(instance)
+    }
 
     return {
       instance,
@@ -232,6 +280,7 @@ export class WorkflowEngine {
       newState: transitioned ? decision.proposedTransition ?? undefined : undefined,
       actionsExecuted,
       llmReasoning: decision.reasoning,
+      transition: matchedTransition,
     }
   }
 
@@ -246,7 +295,7 @@ export class WorkflowEngine {
     instanceId: string,
     toState: string,
     metadata: Record<string, unknown> = {}
-  ): Promise<WorkflowInstance> {
+  ): Promise<TriggerTransitionResult> {
     const instance = await this.getInstance(instanceId)
     if (instance.status !== 'active') {
       throw new Error(`Instance '${instanceId}' is not active (status: ${instance.status})`)
@@ -258,6 +307,15 @@ export class WorkflowEngine {
     }
 
     const previousState = instance.currentState
+
+    // Find the matched transition definition
+    const matchedTransition = this.config.workflow.transitions.find(
+      t => t.from === previousState && t.to === toState
+    )!
+
+    // Merge caller metadata with transition definition metadata
+    const mergedMetadata = { ...matchedTransition.metadata, ...metadata }
+
     const event: TransitionEvent = {
       timestamp: new Date().toISOString(),
       fromState: previousState,
@@ -266,23 +324,47 @@ export class WorkflowEngine {
       triggeredBy: 'host',
       actionsExecuted: [],
       contextDelta: {},
-      metadata,
+      metadata: mergedMetadata,
     }
 
-    instance.currentState = toState
     instance.history = [...instance.history, event]
     instance.updatedAt = new Date().toISOString()
 
-    const newStateDef = this.config.workflow.states[toState]
-    if (newStateDef?.nodeType === 'end') {
-      instance.status = 'completed'
+    if (toState === previousState) {
+      // Self-transition: record event, increment stayCount
+      instance.stayCount = (instance.stayCount ?? 0) + 1
+      await this.safeHook('onTransition', instance, event)
+    } else {
+      // Real transition
+      await this.safeHook('onExitState', instance, previousState)
+      await this.safeHook('onTransition', instance, event)
+
+      instance.currentState = toState
+      instance.stayCount = 0
+
+      const newStateDef = this.config.workflow.states[toState]
+      if (newStateDef?.nodeType === 'end') {
+        instance.status = 'completed'
+      }
+      instance.timeoutAt = newStateDef?.timeout
+        ? new Date(Date.now() + newStateDef.timeout.duration).toISOString()
+        : undefined
+
+      await this.safeHook('onEnterState', instance, toState, newStateDef!)
+
+      if (instance.status === 'completed') {
+        await this.safeHook('onInstanceCompleted', instance)
+      }
     }
-    instance.timeoutAt = newStateDef?.timeout
-      ? new Date(Date.now() + newStateDef.timeout.duration).toISOString()
-      : undefined
 
     await this.config.storageAdapter.saveInstance(instance)
-    return instance
+
+    // Process unconditional transitions from new state
+    if (toState !== previousState) {
+      await this.processUnconditionalTransitions(instance)
+    }
+
+    return { instance, transition: matchedTransition, event }
   }
 
   /**
@@ -300,9 +382,10 @@ export class WorkflowEngine {
       throw new Error(`State '${toState}' is not defined in the workflow`)
     }
 
+    const previousState = instance.currentState
     const event: TransitionEvent = {
       timestamp: new Date().toISOString(),
-      fromState: instance.currentState,
+      fromState: previousState,
       toState,
       trigger: 'host_driven',
       triggeredBy: 'force',
@@ -311,13 +394,23 @@ export class WorkflowEngine {
       metadata: { forced: true, reason },
     }
 
+    await this.safeHook('onExitState', instance, previousState)
+    await this.safeHook('onTransition', instance, event)
+
     instance.currentState = toState
     instance.status = targetDef.nodeType === 'end' ? 'completed' : 'active'
+    instance.stayCount = toState === previousState ? (instance.stayCount ?? 0) + 1 : 0
     instance.history = [...instance.history, event]
     instance.updatedAt = new Date().toISOString()
     instance.timeoutAt = targetDef.timeout
       ? new Date(Date.now() + targetDef.timeout.duration).toISOString()
       : undefined
+
+    await this.safeHook('onEnterState', instance, toState, targetDef)
+
+    if (instance.status === 'completed') {
+      await this.safeHook('onInstanceCompleted', instance)
+    }
 
     await this.config.storageAdapter.saveInstance(instance)
     return instance
@@ -348,11 +441,11 @@ export class WorkflowEngine {
         await this.registry.execute(action, {}, instance.context)
       }
 
-      const updated = await this.triggerTransition(instance.id, toState, {
+      const result = await this.triggerTransition(instance.id, toState, {
         triggeredBy: 'timeout',
         timedOutFrom: instance.currentState,
       })
-      processed.push(updated)
+      processed.push(result.instance)
     }
 
     return processed
@@ -396,5 +489,80 @@ export class WorkflowEngine {
       Array.isArray(obj.actions) &&
       (obj.proposedTransition === null || typeof obj.proposedTransition === 'string')
     )
+  }
+
+  // ─── Hook helpers ─────────────────────────────────────────────────────────
+
+  /**
+   * Fire a lifecycle hook safely — errors are logged but do not prevent
+   * the transition from completing.
+   */
+  private async safeHook(name: 'onInstanceCreated' | 'onInstanceCompleted', instance: WorkflowInstance): Promise<void>
+  private async safeHook(name: 'onEnterState', instance: WorkflowInstance, state: string, stateDef: StateDefinition): Promise<void>
+  private async safeHook(name: 'onExitState', instance: WorkflowInstance, state: string): Promise<void>
+  private async safeHook(name: 'onTransition', instance: WorkflowInstance, event: TransitionEvent): Promise<void>
+  private async safeHook(name: string, ...args: unknown[]): Promise<void> {
+    const hook = (this.hooks as Record<string, ((...a: unknown[]) => Promise<void>) | undefined>)[name]
+    if (!hook) return
+    try {
+      await hook(...args)
+    } catch (err) {
+      console.error(`[ai-flower] Hook '${name}' threw:`, err instanceof Error ? err.message : err)
+    }
+  }
+
+  // ─── Unconditional transition processing ──────────────────────────────────
+
+  /**
+   * After entering a new state, check if it has unconditional transitions.
+   * If so, automatically follow the first one. Chains up to maxUnconditionalDepth.
+   */
+  private async processUnconditionalTransitions(instance: WorkflowInstance): Promise<void> {
+    for (let depth = 0; depth < this.maxUnconditionalDepth; depth++) {
+      if (instance.status !== 'active') break
+
+      const unconditionals = this.config.workflow.transitions.filter(
+        t => t.from === instance.currentState && t.trigger === 'unconditional'
+      )
+      if (unconditionals.length === 0) break
+
+      const transition = unconditionals[0]
+      const previousState = instance.currentState
+
+      const event: TransitionEvent = {
+        timestamp: new Date().toISOString(),
+        fromState: previousState,
+        toState: transition.to,
+        trigger: 'unconditional',
+        triggeredBy: 'unconditional',
+        actionsExecuted: [],
+        contextDelta: {},
+        metadata: transition.metadata,
+      }
+
+      await this.safeHook('onExitState', instance, previousState)
+      await this.safeHook('onTransition', instance, event)
+
+      instance.currentState = transition.to
+      instance.stayCount = 0
+      instance.history = [...instance.history, event]
+      instance.updatedAt = new Date().toISOString()
+
+      const newStateDef = this.config.workflow.states[transition.to]
+      if (newStateDef?.nodeType === 'end') {
+        instance.status = 'completed'
+      }
+      instance.timeoutAt = newStateDef?.timeout
+        ? new Date(Date.now() + newStateDef.timeout.duration).toISOString()
+        : undefined
+
+      await this.safeHook('onEnterState', instance, transition.to, newStateDef!)
+
+      if (instance.status === 'completed') {
+        await this.safeHook('onInstanceCompleted', instance)
+      }
+
+      await this.config.storageAdapter.saveInstance(instance)
+    }
   }
 }

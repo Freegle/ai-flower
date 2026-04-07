@@ -63,6 +63,8 @@ export interface TransitionDefinition {
   label?: string
   /** Edge style hint for the editor ('straight' | 'bezier' | 'smoothstep') */
   edgeStyle?: string
+  /** Consumer-defined metadata (e.g. { type: 'affirm' } or { priority: 1 }) */
+  metadata?: Record<string, unknown>
 }
 
 export interface WorkflowDefinition {
@@ -125,6 +127,8 @@ export interface WorkflowInstance {
   label?: string
   /** If the current state has a timeout, when it fires */
   timeoutAt?: string  // ISO 8601
+  /** Consecutive self-transitions in the current state (reset to 0 on real transitions) */
+  stayCount: number
 }
 
 // ─── Engine interfaces ───────────────────────────────────────────────────────
@@ -140,6 +144,14 @@ export interface ProcessResult {
   newState?: string
   actionsExecuted: ExecutedAction[]
   llmReasoning?: string
+  /** The matched transition definition, if a transition occurred */
+  transition?: TransitionDefinition
+}
+
+export interface TriggerTransitionResult {
+  instance: WorkflowInstance
+  transition: TransitionDefinition
+  event: TransitionEvent
 }
 
 export interface InstanceFilter {

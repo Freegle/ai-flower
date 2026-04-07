@@ -230,9 +230,9 @@ describe('WorkflowEngine', () => {
       const instance = await engine.createInstance()
       // Move to QUALIFIED first via force
       await engine.forceTransition(instance.id, 'QUALIFIED', 'test setup')
-      const updated = await engine.triggerTransition(instance.id, 'DONE')
-      expect(updated.currentState).toBe('DONE')
-      expect(updated.status).toBe('completed')
+      const result = await engine.triggerTransition(instance.id, 'DONE')
+      expect(result.instance.currentState).toBe('DONE')
+      expect(result.instance.status).toBe('completed')
     })
 
     it('rejects undefined transitions', async () => {
@@ -246,9 +246,8 @@ describe('WorkflowEngine', () => {
       const { engine } = makeEngine()
       const instance = await engine.createInstance()
       await engine.forceTransition(instance.id, 'QUALIFIED', 'setup')
-      await engine.triggerTransition(instance.id, 'DONE', { confidence: 0.92, classifier: 'vector' })
-      const updated = await engine.getInstance(instance.id)
-      const lastEvent = updated.history[updated.history.length - 1]
+      const result = await engine.triggerTransition(instance.id, 'DONE', { confidence: 0.92, classifier: 'vector' })
+      const lastEvent = result.instance.history[result.instance.history.length - 1]
       expect(lastEvent.trigger).toBe('host_driven')
       expect(lastEvent.metadata?.confidence).toBe(0.92)
     })

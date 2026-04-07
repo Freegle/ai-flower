@@ -1,6 +1,6 @@
 // Engine
 export { WorkflowEngine } from './engine/WorkflowEngine.js'
-export type { WorkflowEngineConfig } from './engine/WorkflowEngine.js'
+export type { WorkflowEngineConfig, WorkflowHooks } from './engine/WorkflowEngine.js'
 export { ActionRegistry } from './engine/ActionRegistry.js'
 export { TransitionValidator } from './engine/TransitionValidator.js'
 export type { ValidationResult, ValidationError } from './engine/TransitionValidator.js'
@@ -26,6 +26,7 @@ export type {
   ActionDefinition,
   ActionHandler,
   LLMDecision,
+  TriggerTransitionResult,
 } from './schema/types.js'
 
 // Storage adapters

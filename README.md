@@ -128,6 +128,69 @@ Peer dependencies: `vue`, `@vue-flow/core`, `elkjs` (for auto-layout).
 }
 ```
 
+## Lifecycle hooks
+
+React to state changes without modifying the engine. All hooks are async and awaited. Errors in hooks are logged but never prevent transitions.
+
+```ts
+const engine = new WorkflowEngine({
+  workflow,
+  storageAdapter: new MemoryStorage(),
+  hooks: {
+    onInstanceCreated: async (instance) => { /* ... */ },
+    onEnterState: async (instance, state, stateDef) => { /* ... */ },
+    onExitState: async (instance, state) => { /* ... */ },
+    onTransition: async (instance, event) => { /* ... */ },
+    onInstanceCompleted: async (instance) => { /* ... */ },
+  },
+})
+```
+
+Hooks fire at the appropriate points in `processInput()`, `triggerTransition()`, and `forceTransition()`.
+
+## Transition metadata
+
+Attach domain-specific data to transitions without modifying the core schema:
+
+```json
+{
+  "id": "t1",
+  "from": "GREETING",
+  "to": "SCHEDULE",
+  "trigger": "host_driven",
+  "metadata": { "type": "affirm", "priority": 1 }
+}
+```
+
+Metadata flows through to `TransitionEvent` and is available in hooks and return values. `triggerTransition()` returns a `TriggerTransitionResult` with the matched `TransitionDefinition`, `TransitionEvent`, and updated instance.
+
+## Self-transitions
+
+Stay in the current state while recording the event and tracking how many times in a row:
+
+```ts
+// MIDDLE -> MIDDLE self-transition (defined in workflow)
+const result = await engine.triggerTransition(instanceId, 'MIDDLE', { reason: 'rambling' })
+console.log(result.instance.stayCount) // 1, 2, 3, ...
+```
+
+`stayCount` increments on each self-transition and resets to 0 on any real state change. Useful for retry counting, rambling detection, or any "stay here but note what happened" pattern. Self-transitions fire `onTransition` but not `onEnterState`/`onExitState`.
+
+## Unconditional transitions
+
+States that have only `unconditional` transitions are automatically traversed:
+
+```json
+{
+  "id": "route1",
+  "from": "ROUTER",
+  "to": "KNOWN_CALLER",
+  "trigger": "unconditional"
+}
+```
+
+When an instance enters a state with unconditional transitions, the engine automatically follows the first one. This chains (up to a configurable depth limit, default 10) to support pass-through routing nodes.
+
 ## Tests
 
 ```bash
