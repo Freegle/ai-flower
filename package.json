@@ -1,0 +1,64 @@
+{
+  "name": "ai-flower",
+  "version": "0.1.0",
+  "description": "Constrained AI workflow engine with FSM-enforced state transitions and Vue Flow visual editor",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./vue": {
+      "import": "./dist/vue.js",
+      "types": "./dist/vue.d.ts"
+    },
+    "./adapters/claude": {
+      "import": "./dist/adapters/claude.js",
+      "types": "./dist/adapters/claude.d.ts"
+    },
+    "./adapters/sqlite": {
+      "import": "./dist/adapters/sqlite.js",
+      "types": "./dist/adapters/sqlite.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "tsc --noEmit"
+  },
+  "keywords": ["llm", "fsm", "workflow", "claude", "anthropic", "vue-flow"],
+  "license": "MIT",
+  "peerDependencies": {
+    "vue": "^3.0.0",
+    "@vue-flow/core": "^1.0.0",
+    "elkjs": "^0.9.0"
+  },
+  "peerDependenciesMeta": {
+    "vue": { "optional": true },
+    "@vue-flow/core": { "optional": true },
+    "elkjs": { "optional": true }
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "vitest": "^1.6.0",
+    "@vitest/coverage-v8": "^1.6.0",
+    "vue": "^3.4.0",
+    "@vue-flow/core": "^1.48.0",
+    "@vue-flow/background": "^1.3.0",
+    "@vue-flow/controls": "^1.1.0",
+    "elkjs": "^0.9.3",
+    "web-worker": "^1.3.0",
+    "@anthropic-ai/sdk": "^0.24.0",
+    "better-sqlite3": "^9.0.0",
+    "@types/better-sqlite3": "^7.6.0",
+    "uuid": "^10.0.0",
+    "@types/uuid": "^10.0.0"
+  }
+}
