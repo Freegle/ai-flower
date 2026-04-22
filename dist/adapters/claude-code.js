@@ -38,6 +38,12 @@ export class ClaudeCodeAdapter {
                 // Disable all tools — pure LLM call for JSON decision output
                 allowedTools: [],
                 permissionMode: 'default',
+                // Forward caller-supplied options so `model` (and any future
+                // pass-through config) actually reaches the SDK. Previously the
+                // constructor stored `options` but nothing read from them, so a
+                // caller's `new ClaudeCodeAdapter({ model: 'haiku' })` was silently
+                // ignored and every call ran on the session default (Opus).
+                ...(this.#options.model ? { model: this.#options.model } : {}),
             },
         });
         for await (const message of gen) {
