@@ -54,7 +54,10 @@ export class ClaudeCodeAdapter implements LLMAdapter {
         maxTurns: 1,
         // Disable all tools — pure LLM call for JSON decision output
         allowedTools: [],
-        permissionMode: 'default',
+        // Use 'dontAsk' to skip interactive permission prompts in automated contexts
+        // (e.g. monitor-fsm loops). 'default' mode hangs waiting for user interaction
+        // that never comes, blocking the generator.
+        permissionMode: 'dontAsk',
         // Forward caller-supplied options so `model` (and any future
         // pass-through config) actually reaches the SDK. Previously the
         // constructor stored `options` but nothing read from them, so a
