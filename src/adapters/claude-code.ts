@@ -73,8 +73,9 @@ export class ClaudeCodeAdapter implements LLMAdapter {
       prompt: user,
       options: {
         systemPrompt: system,
-        maxTurns: 5,
-        // Disable all tools — pure LLM call for JSON decision output
+        // No maxTurns cap — Claude Code consumes turns on startup (memory
+        // reads, hooks) before the model even responds, so any fixed cap
+        // risks error_max_turns. With allowedTools:[] there is no loop risk.
         allowedTools: [],
         // Use 'dontAsk' to skip interactive permission prompts in automated contexts
         // (e.g. monitor-fsm loops). 'default' mode hangs waiting for user interaction
