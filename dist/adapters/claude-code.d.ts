@@ -20,6 +20,13 @@ export interface ClaudeCodeAdapterOptions {
     maxTokens?: number;
     /** Model to use. Defaults to the session's current model. */
     model?: string;
+    /**
+     * Explicit path to the claude executable. If omitted the adapter runs
+     * `which claude` to find the globally-installed binary, which avoids the
+     * SDK's platform-package auto-detection picking the musl variant on
+     * glibc WSL2 systems.
+     */
+    pathToClaudeCodeExecutable?: string;
 }
 export declare class ClaudeCodeAdapter implements LLMAdapter {
     #private;

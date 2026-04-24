@@ -1,4 +1,11 @@
-import type { WorkflowDefinition, WorkflowInstance, WorkflowInput, ProcessResult, LLMAdapter, StorageAdapter, ActionDefinition, InstanceFilter, InstanceStatus } from '../schema/types.js';
+import type { WorkflowDefinition, WorkflowInstance, WorkflowInput, ProcessResult, TransitionEvent, TriggerTransitionResult, LLMAdapter, StorageAdapter, ActionDefinition, StateDefinition, InstanceFilter, InstanceStatus } from '../schema/types.js';
+export interface WorkflowHooks {
+    onEnterState?: (instance: WorkflowInstance, state: string, stateDef: StateDefinition) => Promise<void>;
+    onExitState?: (instance: WorkflowInstance, state: string) => Promise<void>;
+    onTransition?: (instance: WorkflowInstance, event: TransitionEvent) => Promise<void>;
+    onInstanceCreated?: (instance: WorkflowInstance) => Promise<void>;
+    onInstanceCompleted?: (instance: WorkflowInstance) => Promise<void>;
+}
 export interface WorkflowEngineConfig {
     workflow: WorkflowDefinition;
     storageAdapter: StorageAdapter;
@@ -7,6 +14,10 @@ export interface WorkflowEngineConfig {
     actions?: ActionDefinition[];
     /** Max LLM retries when the response fails validation (default: 1) */
     maxLLMRetries?: number;
+    /** Lifecycle hooks — async callbacks fired during state changes */
+    hooks?: WorkflowHooks;
+    /** Max depth for chained unconditional transitions (default: 10) */
+    maxUnconditionalDepth?: number;
 }
 /**
  * The main orchestrator. Supports two transition modes:
@@ -25,6 +36,8 @@ export declare class WorkflowEngine {
     private readonly registry;
     private readonly promptBuilder;
     private readonly maxRetries;
+    private readonly hooks;
+    private readonly maxUnconditionalDepth;
     constructor(config: WorkflowEngineConfig);
     /** Register an additional action after construction. */
     registerAction(definition: ActionDefinition): void;
@@ -44,7 +57,7 @@ export declare class WorkflowEngine {
      * The engine validates the transition is defined in the workflow, records
      * it in history, and updates instance state.
      */
-    triggerTransition(instanceId: string, toState: string, metadata?: Record<string, unknown>): Promise<WorkflowInstance>;
+    triggerTransition(instanceId: string, toState: string, metadata?: Record<string, unknown>): Promise<TriggerTransitionResult>;
     /**
      * Force a transition regardless of whether it is defined in the workflow.
      * For human override / admin use only — records the override in history.
@@ -57,5 +70,15 @@ export declare class WorkflowEngine {
     processTimeouts(): Promise<WorkflowInstance[]>;
     private parseLLMResponse;
     private isLLMDecision;
+    /**
+     * Fire a lifecycle hook safely — errors are logged but do not prevent
+     * the transition from completing.
+     */
+    private safeHook;
+    /**
+     * After entering a new state, check if it has unconditional transitions.
+     * If so, automatically follow the first one. Chains up to maxUnconditionalDepth.
+     */
+    private processUnconditionalTransitions;
 }
 //# sourceMappingURL=WorkflowEngine.d.ts.map

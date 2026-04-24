@@ -28,6 +28,21 @@ export class ClaudeCodeAdapter {
         // Dynamic import — only load when actually called, avoids hard dep.
         // @ts-ignore — optional peer dependency, not in devDependencies
         const { query } = await import('@anthropic-ai/claude-agent-sdk');
+        const { execFileSync } = await import('node:child_process');
+        // Resolve the claude executable. Prefer the caller-supplied path, then
+        // fall back to `which claude` (the globally-installed binary). Without an
+        // explicit path the SDK tries to auto-detect from its platform-specific
+        // npm packages; on glibc WSL2 it can pick the musl variant, which cannot
+        // execute and throws "native binary not found".
+        let claudeExe = this.#options.pathToClaudeCodeExecutable;
+        if (!claudeExe) {
+            try {
+                const found = execFileSync('which', ['claude'], { encoding: 'utf8' }).trim();
+                if (found)
+                    claudeExe = found;
+            }
+            catch { /* fall through — let SDK auto-detect */ }
+        }
         const collectedText = [];
         let finalResult = null;
         const gen = query({
@@ -41,6 +56,8 @@ export class ClaudeCodeAdapter {
                 // (e.g. monitor-fsm loops). 'default' mode hangs waiting for user interaction
                 // that never comes, blocking the generator.
                 permissionMode: 'dontAsk',
+                // Explicit executable path avoids musl/glibc mismatch on WSL2.
+                ...(claudeExe ? { pathToClaudeCodeExecutable: claudeExe } : {}),
                 // Forward caller-supplied options so `model` (and any future
                 // pass-through config) actually reaches the SDK. Previously the
                 // constructor stored `options` but nothing read from them, so a

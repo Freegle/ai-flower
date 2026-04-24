@@ -13,6 +13,7 @@ export class SQLiteStorage {
         status TEXT NOT NULL DEFAULT 'active',
         context TEXT NOT NULL DEFAULT '{}',
         history TEXT NOT NULL DEFAULT '[]',
+        stay_count INTEGER NOT NULL DEFAULT 0,
         label TEXT,
         timeout_at TEXT,
         created_at TEXT NOT NULL,
@@ -32,17 +33,18 @@ export class SQLiteStorage {
     async saveInstance(instance) {
         this.db.prepare(`
       INSERT INTO llm_fsm_instances
-        (id, workflow_id, current_state, status, context, history, label, timeout_at, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (id, workflow_id, current_state, status, context, history, stay_count, label, timeout_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         current_state = excluded.current_state,
         status        = excluded.status,
         context       = excluded.context,
         history       = excluded.history,
+        stay_count    = excluded.stay_count,
         label         = excluded.label,
         timeout_at    = excluded.timeout_at,
         updated_at    = excluded.updated_at
-    `).run(instance.id, instance.workflowId, instance.currentState, instance.status, JSON.stringify(instance.context), JSON.stringify(instance.history), instance.label ?? null, instance.timeoutAt ?? null, instance.createdAt, instance.updatedAt);
+    `).run(instance.id, instance.workflowId, instance.currentState, instance.status, JSON.stringify(instance.context), JSON.stringify(instance.history), instance.stayCount ?? 0, instance.label ?? null, instance.timeoutAt ?? null, instance.createdAt, instance.updatedAt);
     }
     async loadInstance(id) {
         const row = this.db.prepare(`SELECT * FROM llm_fsm_instances WHERE id = ?`).get(id);
@@ -97,6 +99,7 @@ export class SQLiteStorage {
             status: row.status,
             context: JSON.parse(row.context),
             history: JSON.parse(row.history),
+            stayCount: row.stay_count ?? 0,
             label: row.label,
             timeoutAt: row.timeout_at,
             createdAt: row.created_at,
