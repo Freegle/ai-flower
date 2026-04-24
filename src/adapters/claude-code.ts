@@ -73,7 +73,7 @@ export class ClaudeCodeAdapter implements LLMAdapter {
       prompt: user,
       options: {
         systemPrompt: system,
-        maxTurns: 1,
+        maxTurns: 5,
         // Disable all tools — pure LLM call for JSON decision output
         allowedTools: [],
         // Use 'dontAsk' to skip interactive permission prompts in automated contexts
