@@ -67,6 +67,7 @@ export class ClaudeCodeAdapter implements LLMAdapter {
 
     const collectedText: string[] = []
     let finalResult: string | null = null
+    const seenTypes: string[] = []
 
     const gen = query({
       prompt: user,
@@ -91,22 +92,26 @@ export class ClaudeCodeAdapter implements LLMAdapter {
     })
 
     for await (const message of gen) {
-      if (message.type === 'result') {
-        // Final result — extract text
-        if (typeof (message as any).result === 'string') {
-          finalResult = (message as any).result
-        } else if (Array.isArray((message as any).content)) {
-          finalResult = (message as any).content
+      const msg = message as any
+      seenTypes.push(msg.type ?? 'unknown')
+      if (msg.type === 'result') {
+        // SDK error subtypes — surface the reason rather than "empty response"
+        if (msg.subtype && msg.subtype !== 'success') {
+          throw new Error(`ClaudeCodeAdapter: query() ended with subtype=${msg.subtype}`)
+        }
+        if (typeof msg.result === 'string') {
+          finalResult = msg.result
+        } else if (Array.isArray(msg.content)) {
+          finalResult = msg.content
             .filter((c: any) => c.type === 'text')
             .map((c: any) => c.text)
             .join('')
         }
         break
       }
-      if (message.type === 'assistant') {
-        // Collect assistant message content as fallback
-        if (Array.isArray((message as any).message?.content)) {
-          for (const block of (message as any).message.content) {
+      if (msg.type === 'assistant') {
+        if (Array.isArray(msg.message?.content)) {
+          for (const block of msg.message.content) {
             if (block.type === 'text') collectedText.push(block.text)
           }
         }
@@ -116,7 +121,7 @@ export class ClaudeCodeAdapter implements LLMAdapter {
     const text = finalResult ?? collectedText.join('') ?? ''
 
     if (!text) {
-      throw new Error('ClaudeCodeAdapter: empty response from query()')
+      throw new Error(`ClaudeCodeAdapter: empty response from query() (saw message types: ${seenTypes.join(', ') || 'none'})`)
     }
 
     return text

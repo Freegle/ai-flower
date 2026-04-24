@@ -45,6 +45,7 @@ export class ClaudeCodeAdapter {
         }
         const collectedText = [];
         let finalResult = null;
+        const seenTypes = [];
         const gen = query({
             prompt: user,
             options: {
@@ -67,23 +68,27 @@ export class ClaudeCodeAdapter {
             },
         });
         for await (const message of gen) {
-            if (message.type === 'result') {
-                // Final result — extract text
-                if (typeof message.result === 'string') {
-                    finalResult = message.result;
+            const msg = message;
+            seenTypes.push(msg.type ?? 'unknown');
+            if (msg.type === 'result') {
+                // SDK error subtypes — surface the reason rather than "empty response"
+                if (msg.subtype && msg.subtype !== 'success') {
+                    throw new Error(`ClaudeCodeAdapter: query() ended with subtype=${msg.subtype}`);
                 }
-                else if (Array.isArray(message.content)) {
-                    finalResult = message.content
+                if (typeof msg.result === 'string') {
+                    finalResult = msg.result;
+                }
+                else if (Array.isArray(msg.content)) {
+                    finalResult = msg.content
                         .filter((c) => c.type === 'text')
                         .map((c) => c.text)
                         .join('');
                 }
                 break;
             }
-            if (message.type === 'assistant') {
-                // Collect assistant message content as fallback
-                if (Array.isArray(message.message?.content)) {
-                    for (const block of message.message.content) {
+            if (msg.type === 'assistant') {
+                if (Array.isArray(msg.message?.content)) {
+                    for (const block of msg.message.content) {
                         if (block.type === 'text')
                             collectedText.push(block.text);
                     }
@@ -92,7 +97,7 @@ export class ClaudeCodeAdapter {
         }
         const text = finalResult ?? collectedText.join('') ?? '';
         if (!text) {
-            throw new Error('ClaudeCodeAdapter: empty response from query()');
+            throw new Error(`ClaudeCodeAdapter: empty response from query() (saw message types: ${seenTypes.join(', ') || 'none'})`);
         }
         return text;
     }
