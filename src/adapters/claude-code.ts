@@ -11,11 +11,14 @@
  *
  * The adapter uses query() as a pure text-in / text-out call by:
  * - Passing the FSM system prompt via options.systemPrompt
- * - Setting maxTurns=1 (single-turn, no tool use)
  * - Returning the text from the final 'result' message
+ *
+ * After each successful call(), the `lastUsage` property is populated with
+ * token counts from the SDK result message. An optional `onUsage` callback
+ * receives the same data so callers can record per-call usage without polling.
  */
 
-import type { LLMAdapter } from '../schema/types.js'
+import type { LLMAdapter, LLMUsage } from '../schema/types.js'
 
 export interface ClaudeCodeAdapterOptions {
   /** Maximum tokens for the response. Default: 4096 */
@@ -29,10 +32,24 @@ export interface ClaudeCodeAdapterOptions {
    * glibc WSL2 systems.
    */
   pathToClaudeCodeExecutable?: string
+  /**
+   * Optional callback fired after every call() with the token counts from
+   * that call. Receives zeroes when the SDK result message carries no usage
+   * data (e.g. in tests with a stubbed SDK). Never throws — the adapter
+   * swallows any exception thrown by this callback.
+   */
+  onUsage?: (usage: LLMUsage) => void
 }
 
 export class ClaudeCodeAdapter implements LLMAdapter {
   #options: ClaudeCodeAdapterOptions
+
+  /**
+   * Token counts from the most recent call(). Populated after every
+   * successful call(); zero-valued before the first call or when the SDK
+   * result message carries no usage block.
+   */
+  lastUsage: LLMUsage = { input: 0, output: 0, cacheRead: 0, cacheCreate: 0 }
 
   constructor(options: ClaudeCodeAdapterOptions = {}) {
     this.#options = options
@@ -68,6 +85,7 @@ export class ClaudeCodeAdapter implements LLMAdapter {
     const collectedText: string[] = []
     let finalResult: string | null = null
     const seenTypes: string[] = []
+    let rawUsage: any = null
 
     const gen = query({
       prompt: user,
@@ -100,6 +118,12 @@ export class ClaudeCodeAdapter implements LLMAdapter {
         if (msg.subtype && msg.subtype !== 'success') {
           throw new Error(`ClaudeCodeAdapter: query() ended with subtype=${msg.subtype}`)
         }
+        // Capture the usage block (present on both success and error result messages).
+        // The SDK uses camelCase: { inputTokens, outputTokens, cacheReadInputTokens,
+        // cacheCreationInputTokens }. We also accept snake_case for forward compat.
+        if (msg.usage && typeof msg.usage === 'object') {
+          rawUsage = msg.usage
+        }
         if (typeof msg.result === 'string') {
           finalResult = msg.result
         } else if (Array.isArray(msg.content)) {
@@ -125,6 +149,31 @@ export class ClaudeCodeAdapter implements LLMAdapter {
       throw new Error(`ClaudeCodeAdapter: empty response from query() (saw message types: ${seenTypes.join(', ') || 'none'})`)
     }
 
+    // Parse token usage from the result message. The SDK camelCases the fields
+    // (inputTokens, outputTokens, cacheReadInputTokens, cacheCreationInputTokens);
+    // we also accept the snake_case variants for resilience.
+    const usage: LLMUsage = {
+      input:       this.#pickNumber(rawUsage, ['inputTokens',       'input_tokens']),
+      output:      this.#pickNumber(rawUsage, ['outputTokens',      'output_tokens']),
+      cacheRead:   this.#pickNumber(rawUsage, ['cacheReadInputTokens',   'cache_read_input_tokens']),
+      cacheCreate: this.#pickNumber(rawUsage, ['cacheCreationInputTokens', 'cache_creation_input_tokens']),
+    }
+    this.lastUsage = usage
+
+    if (this.#options.onUsage) {
+      try { this.#options.onUsage(usage) } catch { /* swallow — never let usage reporting break the call */ }
+    }
+
     return text
+  }
+
+  /** Pick the first numeric value from an object by trying a list of key names. */
+  #pickNumber(obj: any, keys: string[]): number {
+    if (!obj || typeof obj !== 'object') return 0
+    for (const k of keys) {
+      const v = obj[k]
+      if (typeof v === 'number' && Number.isFinite(v)) return v
+    }
+    return 0
   }
 }

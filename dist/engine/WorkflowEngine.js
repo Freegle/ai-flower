@@ -189,6 +189,12 @@ export class WorkflowEngine {
         if (transitioned) {
             await this.processUnconditionalTransitions(instance);
         }
+        // Surface token usage from the adapter when available. ClaudeCodeAdapter
+        // (and any future adapter) exposes `lastUsage` after each call().
+        const adapterWithUsage = this.config.llmAdapter;
+        const usage = (adapterWithUsage?.lastUsage && typeof adapterWithUsage.lastUsage === 'object')
+            ? adapterWithUsage.lastUsage
+            : undefined;
         return {
             instance,
             transitioned,
@@ -196,6 +202,7 @@ export class WorkflowEngine {
             actionsExecuted,
             llmReasoning: decision.reasoning,
             transition: matchedTransition,
+            usage,
         };
     }
     // ─── Host-driven transition ────────────────────────────────────────────────

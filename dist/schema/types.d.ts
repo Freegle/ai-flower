@@ -127,6 +127,12 @@ export interface ProcessResult {
     llmReasoning?: string;
     /** The matched transition definition, if a transition occurred */
     transition?: TransitionDefinition;
+    /**
+     * Token usage for the LLM call(s) made during this processInput invocation.
+     * Present when the llmAdapter exposes a `lastUsage` property (e.g.
+     * ClaudeCodeAdapter). Absent when the adapter does not surface usage data.
+     */
+    usage?: LLMUsage;
 }
 export interface TriggerTransitionResult {
     instance: WorkflowInstance;
@@ -137,6 +143,20 @@ export interface InstanceFilter {
     state?: string;
     status?: InstanceStatus;
     label?: string;
+}
+/**
+ * Token-usage summary for a single LLM call.
+ * All fields are zero when the adapter did not return usage data.
+ */
+export interface LLMUsage {
+    /** Prompt / input tokens billed. */
+    input: number;
+    /** Completion / output tokens billed. */
+    output: number;
+    /** Tokens served from the prompt cache (not billed as fresh input). */
+    cacheRead: number;
+    /** Tokens written into the prompt cache during this call. */
+    cacheCreate: number;
 }
 export interface LLMAdapter {
     /**

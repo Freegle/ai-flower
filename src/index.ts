@@ -22,6 +22,7 @@ export type {
   ProcessResult,
   InstanceFilter,
   LLMAdapter,
+  LLMUsage,
   StorageAdapter,
   ActionDefinition,
   ActionHandler,

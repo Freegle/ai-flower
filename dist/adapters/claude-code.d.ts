@@ -11,10 +11,13 @@
  *
  * The adapter uses query() as a pure text-in / text-out call by:
  * - Passing the FSM system prompt via options.systemPrompt
- * - Setting maxTurns=1 (single-turn, no tool use)
  * - Returning the text from the final 'result' message
+ *
+ * After each successful call(), the `lastUsage` property is populated with
+ * token counts from the SDK result message. An optional `onUsage` callback
+ * receives the same data so callers can record per-call usage without polling.
  */
-import type { LLMAdapter } from '../schema/types.js';
+import type { LLMAdapter, LLMUsage } from '../schema/types.js';
 export interface ClaudeCodeAdapterOptions {
     /** Maximum tokens for the response. Default: 4096 */
     maxTokens?: number;
@@ -27,9 +30,22 @@ export interface ClaudeCodeAdapterOptions {
      * glibc WSL2 systems.
      */
     pathToClaudeCodeExecutable?: string;
+    /**
+     * Optional callback fired after every call() with the token counts from
+     * that call. Receives zeroes when the SDK result message carries no usage
+     * data (e.g. in tests with a stubbed SDK). Never throws — the adapter
+     * swallows any exception thrown by this callback.
+     */
+    onUsage?: (usage: LLMUsage) => void;
 }
 export declare class ClaudeCodeAdapter implements LLMAdapter {
     #private;
+    /**
+     * Token counts from the most recent call(). Populated after every
+     * successful call(); zero-valued before the first call or when the SDK
+     * result message carries no usage block.
+     */
+    lastUsage: LLMUsage;
     constructor(options?: ClaudeCodeAdapterOptions);
     call(system: string, user: string): Promise<string>;
 }

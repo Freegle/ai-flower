@@ -11,11 +11,20 @@
  *
  * The adapter uses query() as a pure text-in / text-out call by:
  * - Passing the FSM system prompt via options.systemPrompt
- * - Setting maxTurns=1 (single-turn, no tool use)
  * - Returning the text from the final 'result' message
+ *
+ * After each successful call(), the `lastUsage` property is populated with
+ * token counts from the SDK result message. An optional `onUsage` callback
+ * receives the same data so callers can record per-call usage without polling.
  */
 export class ClaudeCodeAdapter {
     #options;
+    /**
+     * Token counts from the most recent call(). Populated after every
+     * successful call(); zero-valued before the first call or when the SDK
+     * result message carries no usage block.
+     */
+    lastUsage = { input: 0, output: 0, cacheRead: 0, cacheCreate: 0 };
     constructor(options = {}) {
         this.#options = options;
         if (!process.env.CLAUDECODE) {
@@ -46,6 +55,7 @@ export class ClaudeCodeAdapter {
         const collectedText = [];
         let finalResult = null;
         const seenTypes = [];
+        let rawUsage = null;
         const gen = query({
             prompt: user,
             options: {
@@ -76,6 +86,12 @@ export class ClaudeCodeAdapter {
                 if (msg.subtype && msg.subtype !== 'success') {
                     throw new Error(`ClaudeCodeAdapter: query() ended with subtype=${msg.subtype}`);
                 }
+                // Capture the usage block (present on both success and error result messages).
+                // The SDK uses camelCase: { inputTokens, outputTokens, cacheReadInputTokens,
+                // cacheCreationInputTokens }. We also accept snake_case for forward compat.
+                if (msg.usage && typeof msg.usage === 'object') {
+                    rawUsage = msg.usage;
+                }
                 if (typeof msg.result === 'string') {
                     finalResult = msg.result;
                 }
@@ -100,7 +116,34 @@ export class ClaudeCodeAdapter {
         if (!text) {
             throw new Error(`ClaudeCodeAdapter: empty response from query() (saw message types: ${seenTypes.join(', ') || 'none'})`);
         }
+        // Parse token usage from the result message. The SDK camelCases the fields
+        // (inputTokens, outputTokens, cacheReadInputTokens, cacheCreationInputTokens);
+        // we also accept the snake_case variants for resilience.
+        const usage = {
+            input: this.#pickNumber(rawUsage, ['inputTokens', 'input_tokens']),
+            output: this.#pickNumber(rawUsage, ['outputTokens', 'output_tokens']),
+            cacheRead: this.#pickNumber(rawUsage, ['cacheReadInputTokens', 'cache_read_input_tokens']),
+            cacheCreate: this.#pickNumber(rawUsage, ['cacheCreationInputTokens', 'cache_creation_input_tokens']),
+        };
+        this.lastUsage = usage;
+        if (this.#options.onUsage) {
+            try {
+                this.#options.onUsage(usage);
+            }
+            catch { /* swallow — never let usage reporting break the call */ }
+        }
         return text;
+    }
+    /** Pick the first numeric value from an object by trying a list of key names. */
+    #pickNumber(obj, keys) {
+        if (!obj || typeof obj !== 'object')
+            return 0;
+        for (const k of keys) {
+            const v = obj[k];
+            if (typeof v === 'number' && Number.isFinite(v))
+                return v;
+        }
+        return 0;
     }
 }
 //# sourceMappingURL=claude-code.js.map
