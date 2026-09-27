@@ -163,6 +163,33 @@ describe('WorkflowEngine', () => {
       expect(result.instance.context.message_sent).toBe(true)
     })
 
+    it('runs actions against the context updates proposed in the same step', async () => {
+      // A state that writes data and asks an action to save it in one decision (the
+      // Freegle monitor's COLLATE_RESULTS writing questionAnswers and calling
+      // persist_question_answers) must hand the action the new data, not the old.
+      const engine = new WorkflowEngine({
+        workflow: freegleHelperWorkflow,
+        storageAdapter: new MemoryStorage(),
+        llmAdapter: makeLLMAdapter({
+          proposedTransition: 'GATHERING',
+          actions: [{ action: 'send_message', params: {} }],
+          contextUpdates: { draft: 'Hello!' },
+        }),
+      })
+      let seen: Record<string, unknown> | undefined
+      engine.registerAction({
+        name: 'send_message',
+        description: 'Send a chat message',
+        handler: async (_params, context) => {
+          seen = context as Record<string, unknown>
+          return { sent: true }
+        },
+      })
+      const instance = await engine.createInstance()
+      await engine.processInput(instance.id, { type: 'msg', data: {} })
+      expect(seen?.draft).toBe('Hello!')
+    })
+
     it('records transition in history', async () => {
       const { engine } = makeEngine({ proposedTransition: 'GATHERING' })
       const instance = await engine.createInstance()
