@@ -128,8 +128,14 @@ export class WorkflowEngine {
             await this.setStatus(instanceId, 'error');
             throw new Error(`LLM decision failed validation after ${this.maxRetries + 1} attempts: ${lastError}`);
         }
-        // Execute actions
-        const actionsExecuted = await this.registry.executeAll(decision.actions, instance.context);
+        // Execute actions against the context as this decision leaves it. A state that
+        // writes data and asks an action to save it in the same step expects the action to
+        // see that data; running against the context from before the step handed it the old
+        // value instead, so the save found nothing to do.
+        const actionsExecuted = await this.registry.executeAll(decision.actions, {
+            ...instance.context,
+            ...decision.contextUpdates,
+        });
         // Collect action results into context updates
         const actionResults = {};
         for (const exec of actionsExecuted) {
